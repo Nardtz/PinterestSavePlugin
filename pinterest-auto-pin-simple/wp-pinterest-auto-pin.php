@@ -37,6 +37,7 @@ function wppap_init() {
 	add_action( 'wp_ajax_wppap_remove_from_queue', 'wppap_ajax_remove_from_queue' );
 	add_action( 'wp_ajax_wppap_create_table', 'wppap_ajax_create_table' );
 	add_action( 'wp_ajax_wppap_process_queue', 'wppap_ajax_process_queue' );
+	add_action( 'wp_ajax_wppap_get_boards', 'wppap_ajax_get_boards' );
 	
 	// Schedule cron events
 	add_action( 'wppap_process_queue', 'wppap_process_pending_pins' );
@@ -91,7 +92,14 @@ function wppap_render_settings_page() {
 		<h1><?php esc_html_e( 'Pinterest Auto-Pin Settings', 'wp-pinterest-auto-pin' ); ?></h1>
 		
 		<div class="wppap-connection-test">
-			<h3><?php esc_html_e( 'Test Pinterest Connection', 'wp-pinterest-auto-pin' ); ?></h3>
+			<h3><?php esc_html_e( 'Pinterest API Setup', 'wp-pinterest-auto-pin' ); ?></h3>
+			<p><?php esc_html_e( 'To use this plugin, you need to set up Pinterest API credentials:', 'wp-pinterest-auto-pin' ); ?></p>
+			<ol>
+				<li><?php esc_html_e( 'Go to Pinterest Developer Portal: https://developers.pinterest.com/', 'wp-pinterest-auto-pin' ); ?></li>
+				<li><?php esc_html_e( 'Create a new app and get your App ID, App Secret, and Access Token', 'wp-pinterest-auto-pin' ); ?></li>
+				<li><?php esc_html_e( 'Get your Board ID from your Pinterest board URL (e.g., https://pinterest.com/username/board-name/ → board-name)', 'wp-pinterest-auto-pin' ); ?></li>
+				<li><?php esc_html_e( 'Fill in the credentials below and test the connection', 'wp-pinterest-auto-pin' ); ?></li>
+			</ol>
 			<button type="button" id="wppap-test-connection" class="button button-secondary">
 				<?php esc_html_e( 'Test Connection', 'wp-pinterest-auto-pin' ); ?>
 			</button>
@@ -144,6 +152,10 @@ function wppap_render_settings_page() {
 					<th scope="row"><label for="pinterest_board_id"><?php esc_html_e( 'Pinterest Board ID', 'wp-pinterest-auto-pin' ); ?></label></th>
 					<td>
 						<input name="wppap_settings[pinterest_board_id]" id="pinterest_board_id" type="text" class="regular-text" value="<?php echo esc_attr( $settings['pinterest_board_id'] ); ?>" />
+						<button type="button" id="wppap-get-boards" class="button button-secondary" style="margin-left: 10px;">
+							<?php esc_html_e( 'Get My Boards', 'wp-pinterest-auto-pin' ); ?>
+						</button>
+						<div id="wppap-boards-list" style="margin-top: 10px;"></div>
 						<p class="description"><?php esc_html_e( 'The ID of the Pinterest board where pins will be posted.', 'wp-pinterest-auto-pin' ); ?></p>
 					</td>
 				</tr>
@@ -740,24 +752,72 @@ function wppap_process_pending_pins() {
 function wppap_pin_to_pinterest( $pin ) {
 	$settings = wppap_get_settings();
 	
-	// For now, simulate pinning (in a real implementation, you'd use Pinterest API)
-	// This is where you'd integrate with Pinterest API v5
-	
-	// Simulate API call delay
-	sleep( 1 );
-	
-	// Simulate success/failure (90% success rate for demo)
-	$success = ( rand( 1, 10 ) <= 9 );
-	
-	if ( $success ) {
-		return [
-			'success' => true,
-			'pin_id' => 'simulated_pin_' . time() . '_' . $pin->id
-		];
-	} else {
+	// Check if Pinterest API credentials are configured
+	if ( empty( $settings['pinterest_access_token'] ) || empty( $settings['pinterest_board_id'] ) ) {
 		return [
 			'success' => false,
-			'error' => 'Simulated API error - Pinterest service unavailable'
+			'error' => 'Pinterest API credentials not configured. Please set your access token and board ID in settings.'
+		];
+	}
+	
+	// Pinterest API v5 endpoint for creating pins
+	$api_url = 'https://api.pinterest.com/v5/pins';
+	
+	// Prepare the pin data
+	$pin_data = [
+		'board_id' => $settings['pinterest_board_id'],
+		'media_source' => [
+			'source_type' => 'image_url',
+			'url' => $pin->image_url
+		],
+		'title' => $pin->post_title,
+		'description' => $pin->description,
+		'link' => $pin->post_url
+	];
+	
+	// Make API request
+	$response = wp_remote_post( $api_url, [
+		'headers' => [
+			'Authorization' => 'Bearer ' . $settings['pinterest_access_token'],
+			'Content-Type' => 'application/json',
+		],
+		'body' => json_encode( $pin_data ),
+		'timeout' => 30,
+	] );
+	
+	// Check for errors
+	if ( is_wp_error( $response ) ) {
+		return [
+			'success' => false,
+			'error' => 'API request failed: ' . $response->get_error_message()
+		];
+	}
+	
+	$response_code = wp_remote_retrieve_response_code( $response );
+	$response_body = wp_remote_retrieve_body( $response );
+	$response_data = json_decode( $response_body, true );
+	
+	if ( $response_code === 201 ) {
+		// Success - pin created
+		return [
+			'success' => true,
+			'pin_id' => $response_data['id'] ?? 'unknown',
+			'pin_url' => $response_data['url'] ?? ''
+		];
+	} else {
+		// Error - log the response for debugging
+		error_log( 'WPPAP Pinterest API Error: ' . $response_code . ' - ' . $response_body );
+		
+		$error_message = 'Pinterest API error';
+		if ( isset( $response_data['message'] ) ) {
+			$error_message = $response_data['message'];
+		} elseif ( isset( $response_data['error'] ) ) {
+			$error_message = $response_data['error'];
+		}
+		
+		return [
+			'success' => false,
+			'error' => $error_message . ' (HTTP ' . $response_code . ')'
 		];
 	}
 }
@@ -767,6 +827,47 @@ function wppap_deactivate() {
 	wp_clear_scheduled_hook( 'wppap_process_queue' );
 }
 register_deactivation_hook( __FILE__, 'wppap_deactivate' );
+
+function wppap_ajax_get_boards() {
+	check_ajax_referer( 'wppap_nonce', 'nonce' );
+	
+	$settings = wppap_get_settings();
+	
+	if ( empty( $settings['pinterest_access_token'] ) ) {
+		wp_send_json_error( [ 'message' => __( 'Pinterest Access Token is required', 'wp-pinterest-auto-pin' ) ] );
+	}
+	
+	// Get user's boards from Pinterest API
+	$api_url = 'https://api.pinterest.com/v5/boards';
+	
+	$response = wp_remote_get( $api_url, [
+		'headers' => [
+			'Authorization' => 'Bearer ' . $settings['pinterest_access_token'],
+		],
+		'timeout' => 30,
+	] );
+	
+	if ( is_wp_error( $response ) ) {
+		wp_send_json_error( [ 'message' => 'API request failed: ' . $response->get_error_message() ] );
+	}
+	
+	$response_code = wp_remote_retrieve_response_code( $response );
+	$response_body = wp_remote_retrieve_body( $response );
+	$response_data = json_decode( $response_body, true );
+	
+	if ( $response_code === 200 ) {
+		$boards = $response_data['items'] ?? [];
+		wp_send_json_success( [ 'boards' => $boards ] );
+	} else {
+		$error_message = 'Pinterest API error';
+		if ( isset( $response_data['message'] ) ) {
+			$error_message = $response_data['message'];
+		} elseif ( isset( $response_data['error'] ) ) {
+			$error_message = $response_data['error'];
+		}
+		wp_send_json_error( [ 'message' => $error_message . ' (HTTP ' . $response_code . ')' ] );
+	}
+}
 
 // Create table on activation
 register_activation_hook( __FILE__, 'wppap_create_queue_table' );

@@ -69,6 +69,46 @@ jQuery(document).ready(function($) {
 		});
 	});
 	
+	// Get boards
+	$('#wppap-get-boards').on('click', function(e) {
+		e.preventDefault();
+		
+		var button = $(this);
+		var originalText = button.text();
+		
+		button.prop('disabled', true).text('Loading...');
+		
+		$.ajax({
+			url: WPPAP.ajax_url,
+			type: 'POST',
+			data: {
+				action: 'wppap_get_boards',
+				nonce: WPPAP.nonce
+			},
+			success: function(response) {
+				if (response.success) {
+					var boards = response.data.boards;
+					var boardsHtml = '<div class="wppap-boards-container"><h4>Your Pinterest Boards:</h4><ul>';
+					
+					boards.forEach(function(board) {
+						boardsHtml += '<li><strong>' + board.name + '</strong> (ID: ' + board.id + ') <button type="button" class="button button-small" onclick="selectBoard(\'' + board.id + '\')">Select</button></li>';
+					});
+					
+					boardsHtml += '</ul></div>';
+					$('#wppap-boards-list').html(boardsHtml);
+				} else {
+					$('#wppap-boards-list').html('<div class="error">Error: ' + response.data.message + '</div>');
+				}
+			},
+			error: function() {
+				$('#wppap-boards-list').html('<div class="error">Failed to load boards: Network error</div>');
+			},
+			complete: function() {
+				button.prop('disabled', false).text(originalText);
+			}
+		});
+	});
+	
 	// Process queue
 	$('#wppap-process-queue').on('click', function(e) {
 		e.preventDefault();
@@ -226,4 +266,9 @@ function wppapRemoveFromQueue(itemId) {
 			showNotice('error', 'Failed to remove item: Network error');
 		}
 	});
+}
+
+function selectBoard(boardId) {
+	jQuery('#pinterest_board_id').val(boardId);
+	jQuery('#wppap-boards-list').html('<div class="success">Board selected: ' + boardId + '</div>');
 }
