@@ -34,6 +34,41 @@ jQuery(document).ready(function($) {
 		});
 	});
 	
+	// Create table
+	$('#wppap-create-table').on('click', function(e) {
+		e.preventDefault();
+		
+		var button = $(this);
+		var originalText = button.text();
+		
+		button.prop('disabled', true).text('Creating...');
+		
+		$.ajax({
+			url: WPPAP.ajax_url,
+			type: 'POST',
+			data: {
+				action: 'wppap_create_table',
+				nonce: WPPAP.nonce
+			},
+			success: function(response) {
+				if (response.success) {
+					showNotice('success', response.data.message);
+					$('#wppap-table-status').removeClass('error').addClass('success').text('Table created successfully!');
+				} else {
+					showNotice('error', response.data.message);
+					$('#wppap-table-status').removeClass('success').addClass('error').text('Table creation failed');
+				}
+			},
+			error: function() {
+				showNotice('error', 'Table creation failed: Network error');
+				$('#wppap-table-status').removeClass('success').addClass('error').text('Table creation failed');
+			},
+			complete: function() {
+				button.prop('disabled', false).text(originalText);
+			}
+		});
+	});
+	
 	// Start scan
 	$('#wppap-start-scan').on('click', function(e) {
 		e.preventDefault();

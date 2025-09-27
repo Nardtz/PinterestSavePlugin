@@ -35,6 +35,7 @@ function wppap_init() {
 	add_action( 'wp_ajax_wppap_test_connection', 'wppap_ajax_test_connection' );
 	add_action( 'wp_ajax_wppap_pin_now', 'wppap_ajax_pin_now' );
 	add_action( 'wp_ajax_wppap_remove_from_queue', 'wppap_ajax_remove_from_queue' );
+	add_action( 'wp_ajax_wppap_create_table', 'wppap_ajax_create_table' );
 }
 
 function wppap_add_admin_menu() {
@@ -90,6 +91,14 @@ function wppap_render_settings_page() {
 				<?php esc_html_e( 'Test Connection', 'wp-pinterest-auto-pin' ); ?>
 			</button>
 			<div id="wppap-connection-status"></div>
+		</div>
+		
+		<div class="wppap-connection-test">
+			<h3><?php esc_html_e( 'Database Setup', 'wp-pinterest-auto-pin' ); ?></h3>
+			<button type="button" id="wppap-create-table" class="button button-secondary">
+				<?php esc_html_e( 'Create Queue Table', 'wp-pinterest-auto-pin' ); ?>
+			</button>
+			<div id="wppap-table-status"></div>
 		</div>
 		
 		<form method="post" action="">
@@ -228,6 +237,9 @@ function wppap_ajax_scan_posts() {
 		wp_send_json_error( [ 'message' => __( 'Date range is required', 'wp-pinterest-auto-pin' ) ] );
 	}
 
+	// Ensure table exists
+	wppap_create_queue_table();
+
 	$start_timestamp = strtotime( $start_date );
 	$end_timestamp = strtotime( $end_date . ' 23:59:59' );
 
@@ -250,21 +262,26 @@ function wppap_ajax_scan_posts() {
 	] );
 
 	$images_found = 0;
+	$images_added = 0;
 	$settings = wppap_get_settings();
 
 	foreach ( $posts as $post_id ) {
 		$images = wppap_extract_images_from_post( $post_id );
 		
 		foreach ( $images as $image_url ) {
-			// Add to queue
-			wppap_add_to_queue( $post_id, $image_url );
 			$images_found++;
+			// Add to queue
+			$result = wppap_add_to_queue( $post_id, $image_url );
+			if ( $result ) {
+				$images_added++;
+			}
 		}
 	}
 
 	wp_send_json_success( [
-		'message' => sprintf( __( 'Scan completed! Found %d images in %d posts.', 'wp-pinterest-auto-pin' ), $images_found, count( $posts ) ),
+		'message' => sprintf( __( 'Scan completed! Found %d images in %d posts. Added %d images to queue.', 'wp-pinterest-auto-pin' ), $images_found, count( $posts ), $images_added ),
 		'images_found' => $images_found,
+		'images_added' => $images_added,
 		'posts_scanned' => count( $posts ),
 	] );
 }
@@ -340,6 +357,13 @@ function wppap_add_to_queue( $post_id, $image_url ) {
 	
 	$table_name = $wpdb->prefix . 'wppap_pin_queue';
 	
+	// Check if table exists
+	$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$table_name'" );
+	if ( ! $table_exists ) {
+		error_log( 'WPPAP: Table does not exist, creating it...' );
+		wppap_create_queue_table();
+	}
+	
 	// Check if already in queue
 	$existing = $wpdb->get_var( $wpdb->prepare( 
 		"SELECT COUNT(*) FROM $table_name WHERE post_id = %d AND image_url = %s AND status IN ('pending', 'processing')",
@@ -347,6 +371,7 @@ function wppap_add_to_queue( $post_id, $image_url ) {
 	) );
 	
 	if ( $existing > 0 ) {
+		error_log( 'WPPAP: Image already in queue for post ' . $post_id );
 		return false; // Already in queue
 	}
 	
@@ -382,6 +407,12 @@ function wppap_add_to_queue( $post_id, $image_url ) {
 			'%d',
 		]
 	);
+	
+	if ( $result === false ) {
+		error_log( 'WPPAP: Failed to insert into queue: ' . $wpdb->last_error );
+	} else {
+		error_log( 'WPPAP: Successfully added image to queue for post ' . $post_id );
+	}
 	
 	return $result;
 }
@@ -576,6 +607,18 @@ function wppap_ajax_remove_from_queue() {
 		wp_send_json_success( [ 'message' => __( 'Item removed from queue', 'wp-pinterest-auto-pin' ) ] );
 	} else {
 		wp_send_json_error( [ 'message' => __( 'Failed to remove item', 'wp-pinterest-auto-pin' ) ] );
+	}
+}
+
+function wppap_ajax_create_table() {
+	check_ajax_referer( 'wppap_nonce', 'nonce' );
+	
+	$result = wppap_create_queue_table();
+	
+	if ( $result ) {
+		wp_send_json_success( [ 'message' => __( 'Queue table created successfully!', 'wp-pinterest-auto-pin' ) ] );
+	} else {
+		wp_send_json_error( [ 'message' => __( 'Failed to create table', 'wp-pinterest-auto-pin' ) ] );
 	}
 }
 
