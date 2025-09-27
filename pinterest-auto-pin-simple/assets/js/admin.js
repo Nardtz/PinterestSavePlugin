@@ -69,6 +69,41 @@ jQuery(document).ready(function($) {
 		});
 	});
 	
+	// Process queue
+	$('#wppap-process-queue').on('click', function(e) {
+		e.preventDefault();
+		
+		var button = $(this);
+		var originalText = button.text();
+		
+		button.prop('disabled', true).text('Processing...');
+		
+		$.ajax({
+			url: WPPAP.ajax_url,
+			type: 'POST',
+			data: {
+				action: 'wppap_process_queue',
+				nonce: WPPAP.nonce
+			},
+			success: function(response) {
+				if (response.success) {
+					showNotice('success', response.data.message);
+					$('#wppap-queue-status').removeClass('error').addClass('success').text('Queue processed successfully!');
+				} else {
+					showNotice('error', response.data.message);
+					$('#wppap-queue-status').removeClass('success').addClass('error').text('Queue processing failed');
+				}
+			},
+			error: function() {
+				showNotice('error', 'Queue processing failed: Network error');
+				$('#wppap-queue-status').removeClass('success').addClass('error').text('Queue processing failed');
+			},
+			complete: function() {
+				button.prop('disabled', false).text(originalText);
+			}
+		});
+	});
+	
 	// Start scan
 	$('#wppap-start-scan').on('click', function(e) {
 		e.preventDefault();

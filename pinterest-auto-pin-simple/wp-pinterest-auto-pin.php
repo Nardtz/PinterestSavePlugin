@@ -36,6 +36,11 @@ function wppap_init() {
 	add_action( 'wp_ajax_wppap_pin_now', 'wppap_ajax_pin_now' );
 	add_action( 'wp_ajax_wppap_remove_from_queue', 'wppap_ajax_remove_from_queue' );
 	add_action( 'wp_ajax_wppap_create_table', 'wppap_ajax_create_table' );
+	add_action( 'wp_ajax_wppap_process_queue', 'wppap_ajax_process_queue' );
+	
+	// Schedule cron events
+	add_action( 'wppap_process_queue', 'wppap_process_pending_pins' );
+	add_action( 'wp', 'wppap_schedule_cron' );
 }
 
 function wppap_add_admin_menu() {
@@ -99,6 +104,15 @@ function wppap_render_settings_page() {
 				<?php esc_html_e( 'Create Queue Table', 'wp-pinterest-auto-pin' ); ?>
 			</button>
 			<div id="wppap-table-status"></div>
+		</div>
+		
+		<div class="wppap-connection-test">
+			<h3><?php esc_html_e( 'Queue Processing', 'wp-pinterest-auto-pin' ); ?></h3>
+			<button type="button" id="wppap-process-queue" class="button button-primary">
+				<?php esc_html_e( 'Process Queue Now', 'wp-pinterest-auto-pin' ); ?>
+			</button>
+			<div id="wppap-queue-status"></div>
+			<p class="description"><?php esc_html_e( 'Manually process pending pins that are due. The system also runs automatically every hour.', 'wp-pinterest-auto-pin' ); ?></p>
 		</div>
 		
 		<form method="post" action="">
@@ -571,22 +585,57 @@ function wppap_ajax_pin_now() {
 		wp_send_json_error( [ 'message' => __( 'Item not found', 'wp-pinterest-auto-pin' ) ] );
 	}
 	
-	$settings = wppap_get_settings();
-	
-	// For now, just mark as completed (in a full version, you'd actually pin to Pinterest)
-	$result = $wpdb->update(
+	// Mark as processing
+	$wpdb->update(
 		$table_name,
-		[ 'status' => 'completed' ],
+		[ 'status' => 'processing' ],
 		[ 'id' => $item_id ],
 		[ '%s' ],
 		[ '%d' ]
 	);
 	
-	if ( $result ) {
+	// Process the pin
+	$result = wppap_pin_to_pinterest( $item );
+	
+	if ( $result['success'] ) {
+		// Mark as completed
+		$wpdb->update(
+			$table_name,
+			[ 'status' => 'completed' ],
+			[ 'id' => $item_id ],
+			[ '%s' ],
+			[ '%d' ]
+		);
 		wp_send_json_success( [ 'message' => __( 'Pin completed successfully!', 'wp-pinterest-auto-pin' ) ] );
 	} else {
-		wp_send_json_error( [ 'message' => __( 'Failed to update status', 'wp-pinterest-auto-pin' ) ] );
+		// Mark as failed
+		$wpdb->update(
+			$table_name,
+			[ 
+				'status' => 'failed',
+				'error_message' => $result['error']
+			],
+			[ 'id' => $item_id ],
+			[ '%s', '%s' ],
+			[ '%d' ]
+		);
+		wp_send_json_error( [ 'message' => __( 'Pin failed: ', 'wp-pinterest-auto-pin' ) . $result['error'] ] );
 	}
+}
+
+function wppap_ajax_process_queue() {
+	check_ajax_referer( 'wppap_nonce', 'nonce' );
+	
+	// Process pending pins
+	wppap_process_pending_pins();
+	
+	// Get updated stats
+	$stats = wppap_get_queue_stats();
+	
+	wp_send_json_success( [ 
+		'message' => __( 'Queue processed successfully!', 'wp-pinterest-auto-pin' ),
+		'stats' => $stats
+	] );
 }
 
 function wppap_ajax_remove_from_queue() {
@@ -621,6 +670,103 @@ function wppap_ajax_create_table() {
 		wp_send_json_error( [ 'message' => __( 'Failed to create table', 'wp-pinterest-auto-pin' ) ] );
 	}
 }
+
+// Cron scheduling functions
+function wppap_schedule_cron() {
+	if ( ! wp_next_scheduled( 'wppap_process_queue' ) ) {
+		wp_schedule_event( time(), 'hourly', 'wppap_process_queue' );
+	}
+}
+
+function wppap_process_pending_pins() {
+	global $wpdb;
+	
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	$current_time = time();
+	
+	// Get pending pins that are due
+	$pending_pins = $wpdb->get_results( $wpdb->prepare(
+		"SELECT * FROM $table_name WHERE status = 'pending' AND scheduled_time <= %d ORDER BY scheduled_time ASC LIMIT 5",
+		$current_time
+	) );
+	
+	if ( empty( $pending_pins ) ) {
+		error_log( 'WPPAP: No pending pins to process' );
+		return;
+	}
+	
+	error_log( 'WPPAP: Processing ' . count( $pending_pins ) . ' pending pins' );
+	
+	foreach ( $pending_pins as $pin ) {
+		// Mark as processing
+		$wpdb->update(
+			$table_name,
+			[ 'status' => 'processing' ],
+			[ 'id' => $pin->id ],
+			[ '%s' ],
+			[ '%d' ]
+		);
+		
+		// Process the pin
+		$result = wppap_pin_to_pinterest( $pin );
+		
+		if ( $result['success'] ) {
+			// Mark as completed
+			$wpdb->update(
+				$table_name,
+				[ 'status' => 'completed' ],
+				[ 'id' => $pin->id ],
+				[ '%s' ],
+				[ '%d' ]
+			);
+			error_log( 'WPPAP: Successfully pinned image for post ' . $pin->post_id );
+		} else {
+			// Mark as failed
+			$wpdb->update(
+				$table_name,
+				[ 
+					'status' => 'failed',
+					'error_message' => $result['error']
+				],
+				[ 'id' => $pin->id ],
+				[ '%s', '%s' ],
+				[ '%d' ]
+			);
+			error_log( 'WPPAP: Failed to pin image for post ' . $pin->post_id . ': ' . $result['error'] );
+		}
+	}
+}
+
+function wppap_pin_to_pinterest( $pin ) {
+	$settings = wppap_get_settings();
+	
+	// For now, simulate pinning (in a real implementation, you'd use Pinterest API)
+	// This is where you'd integrate with Pinterest API v5
+	
+	// Simulate API call delay
+	sleep( 1 );
+	
+	// Simulate success/failure (90% success rate for demo)
+	$success = ( rand( 1, 10 ) <= 9 );
+	
+	if ( $success ) {
+		return [
+			'success' => true,
+			'pin_id' => 'simulated_pin_' . time() . '_' . $pin->id
+		];
+	} else {
+		return [
+			'success' => false,
+			'error' => 'Simulated API error - Pinterest service unavailable'
+		];
+	}
+}
+
+// Clean up cron on deactivation
+function wppap_deactivate() {
+	wp_clear_scheduled_hook( 'wppap_process_queue' );
+}
+register_deactivation_hook( __FILE__, 'wppap_deactivate' );
 
 // Create table on activation
 register_activation_hook( __FILE__, 'wppap_create_queue_table' );
