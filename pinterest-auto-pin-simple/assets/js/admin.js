@@ -1,0 +1,104 @@
+jQuery(document).ready(function($) {
+	// Test Pinterest connection
+	$('#wppap-test-connection').on('click', function(e) {
+		e.preventDefault();
+		
+		var button = $(this);
+		var originalText = button.text();
+		
+		button.prop('disabled', true).text('Testing...');
+		
+		$.ajax({
+			url: WPPAP.ajax_url,
+			type: 'POST',
+			data: {
+				action: 'wppap_test_connection',
+				nonce: WPPAP.nonce
+			},
+			success: function(response) {
+				if (response.success) {
+					showNotice('success', response.data.message);
+					$('#wppap-connection-status').removeClass('error').addClass('success').text('Connected successfully!');
+				} else {
+					showNotice('error', response.data.message);
+					$('#wppap-connection-status').removeClass('success').addClass('error').text('Connection failed');
+				}
+			},
+			error: function() {
+				showNotice('error', 'Connection test failed: Network error');
+				$('#wppap-connection-status').removeClass('success').addClass('error').text('Connection failed');
+			},
+			complete: function() {
+				button.prop('disabled', false).text(originalText);
+			}
+		});
+	});
+	
+	// Start scan
+	$('#wppap-start-scan').on('click', function(e) {
+		e.preventDefault();
+		
+		var startDate = $('#scan_start_date').val();
+		var endDate = $('#scan_end_date').val();
+		
+		if (!startDate || !endDate) {
+			showNotice('error', 'Please select both start and end dates');
+			return;
+		}
+		
+		// Show progress
+		$('#wppap-scan-progress').show();
+		$('.progress-fill').css('width', '0%');
+		$('.scan-status').text('Starting scan...');
+		
+		// Disable button
+		$(this).prop('disabled', true).text('Scanning...');
+		
+		$.ajax({
+			url: WPPAP.ajax_url,
+			type: 'POST',
+			data: {
+				action: 'wppap_scan_posts',
+				nonce: WPPAP.nonce,
+				start_date: startDate,
+				end_date: endDate
+			},
+			success: function(response) {
+				if (response.success) {
+					$('.progress-fill').css('width', '100%');
+					$('.scan-status').text(response.data.message);
+					showNotice('success', response.data.message);
+				} else {
+					$('.scan-status').text('Scan failed: ' + response.data.message);
+					showNotice('error', 'Scan failed: ' + response.data.message);
+				}
+			},
+			error: function() {
+				$('.scan-status').text('Scan failed: Network error');
+				showNotice('error', 'Scan failed: Network error');
+			},
+			complete: function() {
+				$('#wppap-start-scan').prop('disabled', false).text('Start Scan');
+			}
+		});
+	});
+	
+	// Show notice
+	function showNotice(type, message) {
+		var notice = $('<div class="wppap-notice ' + type + '">' + message + '</div>');
+		$('.wrap h1').after(notice);
+		
+		setTimeout(function() {
+			notice.fadeOut(function() {
+				$(this).remove();
+			});
+		}, 5000);
+	}
+	
+	// Set default dates
+	var today = new Date();
+	var lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+	
+	$('#scan_end_date').val(today.toISOString().split('T')[0]);
+	$('#scan_start_date').val(lastWeek.toISOString().split('T')[0]);
+});
