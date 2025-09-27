@@ -4,7 +4,28 @@
 .wpsf-hidden { display: none; }
 .wpsf-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; }
 .wpsf-modal { background: #fff; width: 92%; max-width: 480px; border-radius: 12px; padding: 20px; position: relative; }
-.wpsf-modal-close { position: absolute; right: 12px; top: 10px; left: auto !important; border: 0; background: transparent; font-size: 24px; line-height: 1; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; outline: none; z-index: 1; }
+.wpsf-modal-close { 
+	position: absolute !important; 
+	right: 12px !important; 
+	top: 10px !important; 
+	left: auto !important; 
+	border: 0 !important; 
+	background: transparent !important; 
+	font-size: 24px !important; 
+	line-height: 1 !important; 
+	width: 32px !important; 
+	height: 32px !important; 
+	display: inline-flex !important; 
+	align-items: center !important; 
+	justify-content: center !important; 
+	cursor: pointer !important; 
+	padding: 0 !important; 
+	margin: 0 !important; 
+	outline: none !important; 
+	z-index: 10 !important; 
+	transform: none !important;
+	transition: none !important;
+}
 .wpsf-modal-close:focus { outline: none; }
 .wpsf-modal-title { margin: 0 0 8px; font-size: 20px; }
 .wpsf-modal-body { margin-bottom: 16px; }

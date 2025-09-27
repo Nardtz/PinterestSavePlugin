@@ -48,9 +48,26 @@
 		// Close when clicking the dimmed area only
 		$modal.on('mousedown.wpsfBackdrop', '.wpsf-modal-backdrop', function(e){ if(e.target === this){ closeModal(); } });
 		$modal.on('click.wpsfBackdrop', '.wpsf-modal-backdrop', function(e){ if(e.target === this){ e.stopPropagation(); } });
-		// Close on X button (first click)
-		$modal.on('mousedown.wpsfClose', '.wpsf-modal-close', function(e){ e.preventDefault(); e.stopPropagation(); closeModal(); });
-		$modal.on('click.wpsfClose', '.wpsf-modal-close', function(e){ e.preventDefault(); e.stopPropagation(); });
+		// Close on X button - use both mousedown and click for reliability
+		$modal.on('mousedown.wpsfClose', '.wpsf-modal-close', function(e){ 
+			e.preventDefault(); 
+			e.stopPropagation(); 
+			e.stopImmediatePropagation();
+			closeModal(); 
+		});
+		$modal.on('click.wpsfClose', '.wpsf-modal-close', function(e){ 
+			e.preventDefault(); 
+			e.stopPropagation(); 
+			e.stopImmediatePropagation();
+			closeModal(); 
+		});
+		// Also handle touch events for mobile
+		$modal.on('touchend.wpsfClose', '.wpsf-modal-close', function(e){ 
+			e.preventDefault(); 
+			e.stopPropagation(); 
+			e.stopImmediatePropagation();
+			closeModal(); 
+		});
 		// Optional: close on Escape key
 		$(document).off('keydown.wpsf').on('keydown.wpsf', function(e){ if(e.key === 'Escape'){ closeModal(); } });
 	}
