@@ -1,0 +1,14 @@
+.wpsf-image-wrap { position: relative; display: inline-block; }
+.wpsf-image-wrap .wpsf-save-btn { position: absolute; right: 8px; top: 8px; background: #e60023; color: #fff; border: 0; padding: 8px 12px; border-radius: 24px; cursor: pointer; font-size: 14px; line-height: 1; box-shadow: 0 2px 6px rgba(0,0,0,0.2); opacity: 0; transition: opacity .2s ease; }
+.wpsf-image-wrap:hover .wpsf-save-btn { opacity: 1; }
+.wpsf-hidden { display: none; }
+.wpsf-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: flex; align-items: center; justify-content: center; z-index: 9999; }
+.wpsf-modal { background: #fff; width: 92%; max-width: 480px; border-radius: 12px; padding: 20px; position: relative; }
+.wpsf-modal-close { position: absolute; right: 12px; top: 10px; left: auto !important; border: 0; background: transparent; font-size: 24px; line-height: 1; width: 32px; height: 32px; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; outline: none; z-index: 1; }
+.wpsf-modal-close:focus { outline: none; }
+.wpsf-modal-title { margin: 0 0 8px; font-size: 20px; }
+.wpsf-modal-body { margin-bottom: 16px; }
+.wpsf-modal-actions { text-align: right; }
+.wpsf-follow-button { background: #e60023; color: #fff; border: 0; padding: 10px 14px; border-radius: 24px; text-decoration: none; font-weight: 600; display: inline-block; }
+
+
