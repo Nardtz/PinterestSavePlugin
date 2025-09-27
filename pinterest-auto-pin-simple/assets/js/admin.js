@@ -102,3 +102,58 @@ jQuery(document).ready(function($) {
 	$('#scan_end_date').val(today.toISOString().split('T')[0]);
 	$('#scan_start_date').val(lastWeek.toISOString().split('T')[0]);
 });
+
+// Global functions for queue actions
+function wppapPinNow(itemId) {
+	if (!confirm('Are you sure you want to pin this image now?')) {
+		return;
+	}
+	
+	jQuery.ajax({
+		url: WPPAP.ajax_url,
+		type: 'POST',
+		data: {
+			action: 'wppap_pin_now',
+			nonce: WPPAP.nonce,
+			item_id: itemId
+		},
+		success: function(response) {
+			if (response.success) {
+				showNotice('success', response.data.message);
+				location.reload();
+			} else {
+				showNotice('error', response.data.message);
+			}
+		},
+		error: function() {
+			showNotice('error', 'Failed to pin image: Network error');
+		}
+	});
+}
+
+function wppapRemoveFromQueue(itemId) {
+	if (!confirm('Are you sure you want to remove this item from the queue?')) {
+		return;
+	}
+	
+	jQuery.ajax({
+		url: WPPAP.ajax_url,
+		type: 'POST',
+		data: {
+			action: 'wppap_remove_from_queue',
+			nonce: WPPAP.nonce,
+			item_id: itemId
+		},
+		success: function(response) {
+			if (response.success) {
+				showNotice('success', response.data.message);
+				location.reload();
+			} else {
+				showNotice('error', response.data.message);
+			}
+		},
+		error: function() {
+			showNotice('error', 'Failed to remove item: Network error');
+		}
+	});
+}

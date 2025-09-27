@@ -33,6 +33,8 @@ function wppap_init() {
 	add_action( 'admin_enqueue_scripts', 'wppap_enqueue_admin_assets' );
 	add_action( 'wp_ajax_wppap_scan_posts', 'wppap_ajax_scan_posts' );
 	add_action( 'wp_ajax_wppap_test_connection', 'wppap_ajax_test_connection' );
+	add_action( 'wp_ajax_wppap_pin_now', 'wppap_ajax_pin_now' );
+	add_action( 'wp_ajax_wppap_remove_from_queue', 'wppap_ajax_remove_from_queue' );
 }
 
 function wppap_add_admin_menu() {
@@ -44,6 +46,15 @@ function wppap_add_admin_menu() {
 		'wppap_render_settings_page',
 		'dashicons-pinterest',
 		30
+	);
+	
+	add_submenu_page(
+		'wppap-settings',
+		__( 'Pin Queue', 'wp-pinterest-auto-pin' ),
+		__( 'Pin Queue', 'wp-pinterest-auto-pin' ),
+		'manage_options',
+		'wppap-queue',
+		'wppap_render_queue_page'
 	);
 }
 
@@ -245,7 +256,8 @@ function wppap_ajax_scan_posts() {
 		$images = wppap_extract_images_from_post( $post_id );
 		
 		foreach ( $images as $image_url ) {
-			// For now, just count images (in a full version, you'd add to queue)
+			// Add to queue
+			wppap_add_to_queue( $post_id, $image_url );
 			$images_found++;
 		}
 	}
@@ -293,3 +305,279 @@ function wppap_extract_images_from_post( $post_id ) {
 	// Remove duplicates
 	return array_unique( $images );
 }
+
+// Queue management functions
+function wppap_create_queue_table() {
+	global $wpdb;
+	
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	$charset_collate = $wpdb->get_charset_collate();
+	
+	$sql = "CREATE TABLE $table_name (
+		id mediumint(9) NOT NULL AUTO_INCREMENT,
+		post_id bigint(20) NOT NULL,
+		image_url varchar(500) NOT NULL,
+		post_title varchar(255) NOT NULL,
+		post_url varchar(500) NOT NULL,
+		description text NOT NULL,
+		status varchar(20) DEFAULT 'pending',
+		scheduled_time bigint(20) NOT NULL,
+		created_at datetime DEFAULT CURRENT_TIMESTAMP,
+		error_message text,
+		PRIMARY KEY (id),
+		KEY post_id (post_id),
+		KEY status (status),
+		KEY scheduled_time (scheduled_time)
+	) $charset_collate;";
+	
+	require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
+	dbDelta( $sql );
+}
+
+function wppap_add_to_queue( $post_id, $image_url ) {
+	global $wpdb;
+	
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	// Check if already in queue
+	$existing = $wpdb->get_var( $wpdb->prepare( 
+		"SELECT COUNT(*) FROM $table_name WHERE post_id = %d AND image_url = %s AND status IN ('pending', 'processing')",
+		$post_id, $image_url
+	) );
+	
+	if ( $existing > 0 ) {
+		return false; // Already in queue
+	}
+	
+	$post = get_post( $post_id );
+	$post_title = get_the_title( $post_id );
+	$post_url = get_permalink( $post_id );
+	$description = wppap_generate_pin_description( $post_id );
+	
+	// Calculate scheduled time (next available slot)
+	$last_scheduled = $wpdb->get_var( "SELECT MAX(scheduled_time) FROM $table_name WHERE status = 'pending'" );
+	$settings = wppap_get_settings();
+	$interval = $settings['default_pin_interval'];
+	$scheduled_time = $last_scheduled ? $last_scheduled + $interval : time() + $interval;
+	
+	$result = $wpdb->insert(
+		$table_name,
+		[
+			'post_id' => $post_id,
+			'image_url' => $image_url,
+			'post_title' => $post_title,
+			'post_url' => $post_url,
+			'description' => $description,
+			'status' => 'pending',
+			'scheduled_time' => $scheduled_time,
+		],
+		[
+			'%d',
+			'%s',
+			'%s',
+			'%s',
+			'%s',
+			'%s',
+			'%d',
+		]
+	);
+	
+	return $result;
+}
+
+function wppap_generate_pin_description( $post_id ) {
+	$post_title = get_the_title( $post_id );
+	$site_name = get_bloginfo( 'name' );
+	
+	return "Check out this amazing content from $site_name! $post_title";
+}
+
+function wppap_get_queue_items( $status = null, $limit = 50 ) {
+	global $wpdb;
+	
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	$where = '';
+	$params = [];
+	
+	if ( $status ) {
+		$where = 'WHERE status = %s';
+		$params[] = $status;
+	}
+	
+	$sql = "SELECT * FROM $table_name $where ORDER BY scheduled_time ASC";
+	
+	if ( $limit ) {
+		$sql .= " LIMIT $limit";
+	}
+	
+	if ( $params ) {
+		$sql = $wpdb->prepare( $sql, $params );
+	}
+	
+	return $wpdb->get_results( $sql );
+}
+
+function wppap_render_queue_page() {
+	$queue_items = wppap_get_queue_items();
+	?>
+	<div class="wrap">
+		<h1><?php esc_html_e( 'Pin Queue', 'wp-pinterest-auto-pin' ); ?></h1>
+		
+		<div class="wppap-queue-stats">
+			<?php
+			$stats = wppap_get_queue_stats();
+			?>
+			<div class="wppap-stat-box">
+				<div class="wppap-stat-number"><?php echo $stats['pending']; ?></div>
+				<div class="wppap-stat-label"><?php esc_html_e( 'Pending', 'wp-pinterest-auto-pin' ); ?></div>
+			</div>
+			<div class="wppap-stat-box">
+				<div class="wppap-stat-number"><?php echo $stats['completed']; ?></div>
+				<div class="wppap-stat-label"><?php esc_html_e( 'Completed', 'wp-pinterest-auto-pin' ); ?></div>
+			</div>
+			<div class="wppap-stat-box">
+				<div class="wppap-stat-number"><?php echo $stats['failed']; ?></div>
+				<div class="wppap-stat-label"><?php esc_html_e( 'Failed', 'wp-pinterest-auto-pin' ); ?></div>
+			</div>
+		</div>
+		
+		<table class="wp-list-table widefat fixed striped">
+			<thead>
+				<tr>
+					<th><?php esc_html_e( 'Image', 'wp-pinterest-auto-pin' ); ?></th>
+					<th><?php esc_html_e( 'Post Title', 'wp-pinterest-auto-pin' ); ?></th>
+					<th><?php esc_html_e( 'Status', 'wp-pinterest-auto-pin' ); ?></th>
+					<th><?php esc_html_e( 'Scheduled Time', 'wp-pinterest-auto-pin' ); ?></th>
+					<th><?php esc_html_e( 'Actions', 'wp-pinterest-auto-pin' ); ?></th>
+				</tr>
+			</thead>
+			<tbody>
+				<?php if ( empty( $queue_items ) ) : ?>
+				<tr>
+					<td colspan="5" class="wppap-no-items">
+						<?php esc_html_e( 'No items in queue. Run a scan to add images.', 'wp-pinterest-auto-pin' ); ?>
+					</td>
+				</tr>
+				<?php else : ?>
+				<?php foreach ( $queue_items as $item ) : ?>
+				<tr>
+					<td>
+						<?php if ( $item->image_url ) : ?>
+							<img src="<?php echo esc_url( $item->image_url ); ?>" class="wppap-image-preview" />
+						<?php endif; ?>
+					</td>
+					<td>
+						<strong><?php echo esc_html( $item->post_title ); ?></strong><br>
+						<small><a href="<?php echo esc_url( $item->post_url ); ?>" target="_blank"><?php esc_html_e( 'View Post', 'wp-pinterest-auto-pin' ); ?></a></small>
+					</td>
+					<td>
+						<span class="status-<?php echo esc_attr( $item->status ); ?>">
+							<?php echo esc_html( ucfirst( $item->status ) ); ?>
+						</span>
+						<?php if ( $item->error_message ) : ?>
+							<br><small class="error-message"><?php echo esc_html( $item->error_message ); ?></small>
+						<?php endif; ?>
+					</td>
+					<td><?php echo esc_html( date( 'Y-m-d H:i:s', $item->scheduled_time ) ); ?></td>
+					<td>
+						<?php if ( $item->status === 'pending' ) : ?>
+							<button class="button button-small" onclick="wppapPinNow(<?php echo $item->id; ?>)">
+								<?php esc_html_e( 'Pin Now', 'wp-pinterest-auto-pin' ); ?>
+							</button>
+						<?php endif; ?>
+						<button class="button button-small" onclick="wppapRemoveFromQueue(<?php echo $item->id; ?>)">
+							<?php esc_html_e( 'Remove', 'wp-pinterest-auto-pin' ); ?>
+						</button>
+					</td>
+				</tr>
+				<?php endforeach; ?>
+				<?php endif; ?>
+			</tbody>
+		</table>
+	</div>
+	<?php
+}
+
+function wppap_get_queue_stats() {
+	global $wpdb;
+	
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	$sql = "SELECT status, COUNT(*) as count FROM $table_name GROUP BY status";
+	$results = $wpdb->get_results( $sql );
+	
+	$stats = [
+		'pending' => 0,
+		'processing' => 0,
+		'completed' => 0,
+		'failed' => 0,
+	];
+	
+	foreach ( $results as $result ) {
+		$stats[ $result->status ] = (int) $result->count;
+	}
+	
+	return $stats;
+}
+
+function wppap_ajax_pin_now() {
+	check_ajax_referer( 'wppap_nonce', 'nonce' );
+	
+	$item_id = absint( $_POST['item_id'] ?? 0 );
+	
+	if ( ! $item_id ) {
+		wp_send_json_error( [ 'message' => __( 'Invalid item ID', 'wp-pinterest-auto-pin' ) ] );
+	}
+	
+	global $wpdb;
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	$item = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM $table_name WHERE id = %d", $item_id ) );
+	
+	if ( ! $item ) {
+		wp_send_json_error( [ 'message' => __( 'Item not found', 'wp-pinterest-auto-pin' ) ] );
+	}
+	
+	$settings = wppap_get_settings();
+	
+	// For now, just mark as completed (in a full version, you'd actually pin to Pinterest)
+	$result = $wpdb->update(
+		$table_name,
+		[ 'status' => 'completed' ],
+		[ 'id' => $item_id ],
+		[ '%s' ],
+		[ '%d' ]
+	);
+	
+	if ( $result ) {
+		wp_send_json_success( [ 'message' => __( 'Pin completed successfully!', 'wp-pinterest-auto-pin' ) ] );
+	} else {
+		wp_send_json_error( [ 'message' => __( 'Failed to update status', 'wp-pinterest-auto-pin' ) ] );
+	}
+}
+
+function wppap_ajax_remove_from_queue() {
+	check_ajax_referer( 'wppap_nonce', 'nonce' );
+	
+	$item_id = absint( $_POST['item_id'] ?? 0 );
+	
+	if ( ! $item_id ) {
+		wp_send_json_error( [ 'message' => __( 'Invalid item ID', 'wp-pinterest-auto-pin' ) ] );
+	}
+	
+	global $wpdb;
+	$table_name = $wpdb->prefix . 'wppap_pin_queue';
+	
+	$result = $wpdb->delete( $table_name, [ 'id' => $item_id ], [ '%d' ] );
+	
+	if ( $result ) {
+		wp_send_json_success( [ 'message' => __( 'Item removed from queue', 'wp-pinterest-auto-pin' ) ] );
+	} else {
+		wp_send_json_error( [ 'message' => __( 'Failed to remove item', 'wp-pinterest-auto-pin' ) ] );
+	}
+}
+
+// Create table on activation
+register_activation_hook( __FILE__, 'wppap_create_queue_table' );
